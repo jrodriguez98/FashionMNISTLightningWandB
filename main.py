@@ -6,7 +6,7 @@ from torchvision import transforms
 from torch.utils.data import DataLoader, random_split
 import pytorch_lightning as pl
 from torchvision import datasets
-from torchvision.transforms import ToTensor
+from torchvision.transforms import ToTensor, Normalize
 import torch.utils.data as data
 import torchmetrics
 from pytorch_lightning.loggers import WandbLogger
@@ -108,51 +108,52 @@ class LitNN(pl.LightningModule):
         }
 
 
-# Press the green button in the gutter to run the script.
+class FashionMNISTDataModule(pl.LightningDataModule):
+
+    def __init__(self, data_dir: str = './data', batch_size: int = 64, train_split: float = 0.8):
+        super(FashionMNISTDataModule, self).__init__()
+
+        self.data_dir = data_dir
+        self.batch_size = batch_size
+        self.train_split = train_split
+        self.transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
+
+    def prepare_data(self) -> None:
+        """ Used for one time preparation processes like downloading, tokenizing... """
+        datasets.FashionMNIST(self.data_dir, train=True, download=True)
+        datasets.FashionMNIST(self.data_dir, train=False, download=True)
+
+    def setup(self, stage=None) -> None:
+        """ Used for preparation processes you might to perform in every node """
+        if stage in ('fit', 'validate', None):
+            full_set = datasets.FashionMNIST(self.data_dir, train=True, transform=self.transform)
+            train_size = int(self.train_split * len(full_set))
+            val_size = len(full_set) - train_size
+            self.train_set, self.val_set = data.random_split(full_set, [train_size, val_size])
+
+        if stage in ('test', None):
+            self.test_set = datasets.FashionMNIST(self.data_dir, train=False, transform=self.transform)
+
+    def train_dataloader(self):
+        return DataLoader(self.train_set, self.batch_size)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_set, 128)
+
+    def test_dataloader(self):
+        return DataLoader(self.test_set, 128)
+
+
 if __name__ == '__main__':
-    # Define transformations
-    training_trans = transforms.Compose([
-        transforms.ToTensor()
-    ])
-
-    test_trans = transforms.Compose([
-        transforms.ToTensor()
-    ])
-
-    # Define datasets
-    train_set = datasets.FashionMNIST(
-        root="./data",
-        train=True,
-        download=True,
-        transform=training_trans
-    )
-
-    test_set = datasets.FashionMNIST(
-        root="./data",
-        train=False,
-        download=True,
-        transform=test_trans
-    )
-
-    # split the train set into two
-    train_size = int(len(train_set) * 0.8)
-    val_size = len(train_set) - train_size
-    seed = torch.Generator().manual_seed(42)
-    train_set, valid_set = data.random_split(train_set, [train_size, val_size], generator=seed)
-
-    # Create DataLoaders
-    train_loader = DataLoader(train_set, 32, False, num_workers=2)
-    val_loader = DataLoader(valid_set, 128, False, num_workers=2)
-    test_loader = DataLoader(test_set, 128, False, num_workers=2)
+    data_module = FashionMNISTDataModule(data_dir='./data', batch_size=64, train_split=0.8)
 
     model = LitNN()  # Create LigthningModule
 
-    wandb_logger = WandbLogger(project='cifar-lightning')  # Create WandBLogger
+    wandb_logger = WandbLogger(project='fMNIST-lightning')  # Create WandBLogger
     wandb_logger.watch(model)  # log gradients and model topology
 
     trainer = pl.Trainer(max_epochs=10, logger=wandb_logger)  # Create trainer
 
-    trainer.fit(model, train_loader, val_loader)  # Train the model
+    trainer.fit(model, datamodule=data_module)  # Train the model
 
-    # Test the model
-    trainer.test(model, test_loader)
+    trainer.test(model, datamodule=data_module)  # Test the model
